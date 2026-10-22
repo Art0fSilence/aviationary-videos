@@ -6,7 +6,7 @@
 //  - Real game sound effects (captured from the game's Web Audio) + countdown ticks
 //  - Full 9:16 frame, big text kept inside Instagram's safe zones
 //  - Ends on a "Can you beat it?" card that cross-fades into the first frame (loops)
-// Usage: node record-v2.js --site <game site folder> --out <output folder> [YYYY-MM-DD] [--keep 3]
+// Usage: node record-v2.js --site <game site folder> --out <output folder> [YYYY-MM-DD] [--keep 3] [--count 3]
 const { chromium } = require("playwright");
 const http = require("http");
 const fs = require("fs");
@@ -18,6 +18,7 @@ const opt = (name, fallback) => { const i = args.indexOf(name); return i >= 0 ? 
 const SITE = path.resolve(opt("--site", path.join(__dirname, "site")));
 const OUT = path.resolve(opt("--out", path.join(__dirname, "out")));
 const KEEP = Number(opt("--keep", 3));
+const COUNT = Number(opt("--count", 3));   // countdown length in seconds before each answer
 fs.mkdirSync(OUT, { recursive: true });
 
 function yesterdayNY() {
@@ -186,7 +187,7 @@ const OVERLAY_CSS = `
     await page.evaluate(() => window.__mark(true));
     const s = now();   // start once the hook is on screen
     await wait(first ? 650 : 150);
-    for (const n of [3, 2, 1]) {
+    for (let n = COUNT; n >= 1; n--) {
       await page.evaluate((n) => { window.__vo.count(n); AviationarySound.tick(n === 1); }, n);
       await wait(n === 1 ? 750 : 800);
     }
@@ -255,7 +256,16 @@ const OVERLAY_CSS = `
     }
   }
   if (on) vsegs.push([startT, lastT]);
-  if (vsegs.length !== segs.length) throw new Error(`found ${vsegs.length} marked parts in the video, expected ${segs.length}`);
+  // Smooth out encoder blips: join parts split by a tiny gap, drop tiny stray parts.
+  const merged = [];
+  for (const p of vsegs) {
+    const prev = merged[merged.length - 1];
+    if (prev && p[0] - prev[1] < 0.35) prev[1] = p[1]; else merged.push([...p]);
+  }
+  const rawParts = vsegs.map(([a, b]) => `${a.toFixed(2)}-${b.toFixed(2)}`).join(" ");
+  vsegs.length = 0;
+  vsegs.push(...merged.filter(([a, b]) => b - a > 0.5));
+  if (vsegs.length !== segs.length) throw new Error(`found ${vsegs.length} marked parts in the video, expected ${segs.length} (raw: ${rawParts})`);
   console.log("Video parts:", vsegs.map(([a, b]) => `${a.toFixed(2)}-${b.toFixed(2)}`).join(" "));
   const final = path.join(OUT, `aviationary-${day}-v2.mp4`);
   const firstFrame = path.join(OUT, `first-${day}.png`);
